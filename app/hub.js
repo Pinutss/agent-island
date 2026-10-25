@@ -66,11 +66,13 @@ function createHub({ token, onChange = () => {}, log = () => {}, now = () => Dat
 
   function snapshot() {
     const at = now()
-    for (const [id, s] of sessions) if (at - s.seenAt > DROP_MS) sessions.delete(id)
+    // A session may say how long it can stay silent (an agent whose hooks only speak on
+    // events, like Grok's); otherwise its heartbeat is expected every few seconds.
+    for (const [id, s] of sessions) if (at - s.seenAt > Math.max(DROP_MS, (s.staleAfterMs ?? 0) * 2)) sessions.delete(id)
 
     return {
       sessions: [...sessions.values()]
-        .map(s => ({ ...s, isStale: at - s.seenAt > STALE_MS }))
+        .map(s => ({ ...s, isStale: at - s.seenAt > (s.staleAfterMs ?? STALE_MS) }))
         .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)),
       permissions: [...permissions.values()]
         .filter(p => p.decision === undefined)
@@ -129,7 +131,12 @@ function createHub({ token, onChange = () => {}, log = () => {}, now = () => Dat
       const body = await readBody(req)
       if (typeof body.sessionId !== 'string' || body.sessionId === '') return send(res, 400, { error: 'sessionId' })
       if (!sessions.has(body.sessionId)) log(`session ${body.sessionId} (${body.project ?? '?'}) connected`)
-      sessions.set(body.sessionId, { ...body, seenAt: now() })
+      // Merged: an agent may send only what changed.
+      const existing = sessions.get(body.sessionId) ?? {}
+      const { tick, ...fields } = body
+      // `tick: 'action'` counts one more action in the turn, for adapters that keep no state.
+      if (tick === 'action') fields.actions = (fields.actions ?? existing.actions ?? 0) + 1
+      sessions.set(body.sessionId, { ...existing, ...fields, seenAt: now() })
       changed()
 
       return send(res, 204)

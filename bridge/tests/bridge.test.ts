@@ -55,7 +55,7 @@ test('a permission request goes to the island, and "always" allows with the dial
   expect(result.decision).toEqual({ behavior: 'allow', updatedPermissions: EDIT.permission_suggestions })
   const asked = sent.find(s => s.method === 'POST' && s.url.endsWith('/v1/permission'))
   expect(asked?.url).toBe('http://127.0.0.1:47823/v1/permission')
-  expect(asked?.body).toMatchObject({ kind: 'diff', title: 'Modifier middleware.ts ?', project: 'checkout-app' })
+  expect(asked?.body).toMatchObject({ kind: 'diff', title: 'Edit middleware.ts?', titleKey: 'edit', titleArg: 'middleware.ts', project: 'checkout-app', source: 'claude-code' })
   expect(String((asked?.body as { body: string }).body)).toContain('+if (await verify(token)) return next()')
 })
 
@@ -64,7 +64,7 @@ test('a refusal in the island is a deny', async ($, on) => {
   await $.session.start({ cwd: 'C:/dev/checkout-app', surface: 'desktop', isInteractive: true })
   const result = await $.classic.PermissionRequest(EDIT)
 
-  expect(result.decision).toEqual({ behavior: 'deny', message: 'Refusé depuis Agent Island.' })
+  expect(result.decision).toEqual({ behavior: 'deny', message: 'Denied from the island.' })
 })
 
 test('"answer in Claude" and a missing island both leave the dialog to Claude', async ($, on) => {
@@ -89,7 +89,7 @@ test('the session and its current action reach the island', async ($, on) => {
   const pushes = sent.filter(s => s.url.endsWith('/v1/session')).map(s => s.body as Record<string, unknown>)
   expect(pushes.length).toBeGreaterThan(0)
   expect(pushes[0]).toMatchObject({ sessionId: 's1', project: 'checkout-app' })
-  expect(pushes.some(p => (p.activity as { label?: string } | undefined)?.label === 'Lit theme.ts')).toBe(true)
+  expect(pushes.some(p => (p.activity as { key?: string; arg?: string } | undefined)?.key === 'read' && (p.activity as { arg?: string }).arg === 'theme.ts')).toBe(true)
 })
 
 test('a question is answered from the island, and the answer is the tool’s result', async ($, on) => {
@@ -124,4 +124,55 @@ test('a plan is shown in the island while Claude’s own dialog decides, then wi
   expect(sent.some(s => s.method === 'DELETE' && decodeURIComponent(s.url).includes(':plan:'))).toBe(true)
   // Nothing waited for a decision from the island.
   expect(sent.some(s => s.method === 'GET' && decodeURIComponent(s.url).includes(':plan:'))).toBe(false)
+})
+
+const lastPush = (sent: Sent[]) =>
+  sent.filter(s => s.url.endsWith('/v1/session')).map(s => s.body as { progress?: { value: number; measured: boolean; done?: number; total?: number }; finishedAt?: number; outcome?: string }).pop()
+
+test('a task list gives measured progress, and the end of the turn 100 %', async ($, on) => {
+  const { clock, sent } = engine(on, {})
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+  await $.session.start({ cwd: 'C:/dev/checkout-app', surface: 'desktop', isInteractive: true })
+  await $.turn.start({ text: 'Add dark mode', turnId: 't1' } as never)
+  const todos = [
+    { content: 'Tokens', status: 'completed', activeForm: 'Tokens' },
+    { content: 'Toggle', status: 'in_progress', activeForm: 'Toggle' },
+    { content: 'Tests', status: 'pending', activeForm: 'Tests' },
+    { content: 'Docs', status: 'pending', activeForm: 'Docs' },
+  ]
+  await $.tool.call({ tool: 'TodoWrite', todos } as never)
+  await clock.advance(1000)
+  expect(lastPush(sent)?.progress).toEqual({ value: (1 + 0.4) / 4, measured: true, done: 1, total: 4 })
+
+  await $.tool.call({ tool: 'TodoWrite', todos: todos.map(t => ({ ...t, status: 'completed' })) } as never)
+  await clock.advance(1000)
+  expect(lastPush(sent)?.progress?.value).toBe(0.97)
+
+  await $.turn.complete({ answer: 'Done', durationMs: 10, isAborted: false, turnId: 't1', reason: 'answer' } as never)
+  await clock.advance(1000)
+  expect(lastPush(sent)).toMatchObject({ progress: { value: 1, done: 4, total: 4 }, outcome: 'done' })
+  expect(typeof lastPush(sent)?.finishedAt).toBe('number')
+})
+
+test('the desktop plan advances step by step; without a list, actions give a capped estimate', async ($, on) => {
+  const { clock, sent } = engine(on, {})
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  await $.session.start({ cwd: 'C:/dev/checkout-app', surface: 'desktop', isInteractive: true })
+  await $.turn.start({ text: 'Fix it', turnId: 't1' } as never)
+  for (let i = 0; i < 6; i++) await $.tool.call({ tool: 'Read', file_path: `src/f${i}.ts` })
+  await clock.advance(1000)
+  const estimate = lastPush(sent)?.progress
+  expect(estimate?.measured).toBe(false)
+  expect(estimate?.value).toBeGreaterThan(0.3)
+  expect(estimate?.value).toBeLessThan(0.9)
+
+  const items = [
+    { content: 'Look', status: 'in_progress' },
+    { content: 'Fix', status: 'pending' },
+  ]
+  await $.tool.call({ tool: 'mcp__ccd_turn__update_plan', items } as never)
+  await $.tool.call({ tool: 'mcp__ccd_turn__update_plan', advance: true } as never)
+  await clock.advance(1000)
+  expect(lastPush(sent)?.progress).toMatchObject({ measured: true, done: 1, total: 2 })
 })

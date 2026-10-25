@@ -73,3 +73,15 @@ test('a question gets its answers back, and an empty answer is refused', async (
   assert.deepEqual(await (await call('/v1/permission/q')).json(), { decision: 'answer', answers: { 'Quelle base ?': 'SQLite' } })
   hub.close()
 })
+
+test('a session update merges into what the hub has, and may set its own silence limit', async () => {
+  const { hub, call } = await start()
+  await call('/v1/session', { method: 'POST', body: { sessionId: 'g1', source: 'grok', project: 'api', staleAfterMs: 1800000 } })
+  await call('/v1/session', { method: 'POST', body: { sessionId: 'g1', phase: 'tool', activity: { key: 'bash', arg: 'npm test' } } })
+  const s = hub.snapshot().sessions[0]
+  assert.equal(s.project, 'api')
+  assert.equal(s.source, 'grok')
+  assert.equal(s.phase, 'tool')
+  assert.equal(s.isStale, false)
+  hub.close()
+})
