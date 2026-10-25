@@ -52,7 +52,9 @@ Requirements: Windows 10/11 (macOS should work but is untested; the dev-server l
 
    or, at the prompt of a terminal session, `/plugin install island-bridge --marketplace Pinutss/agent-island` (answer `y` to add the marketplace, then pick the user scope). Sessions already open pick it up after `/reload-plugins`.
 
-Right-click the tray icon for the theme, the companion, notifications, the island style (attached or floating) and **Start with Windows**.
+Right-click the tray icon for the theme, the companion, notifications, the island style (attached or floating), **Start with Windows** (**Open at login** on macOS) and **Open with Claude Code**.
+
+**Opens by itself.** At each launch the island writes its own command to `~/.claude/island/launch.json`. When a Claude Code session starts (desktop app or terminal) and no island answers, the plugin starts it again from that file, at most once every 5 minutes per session. On Windows it goes through WMI, so the island is not a child of Claude and closing Claude no longer closes it. Untick **Open with Claude Code** to turn this off. Start the island once by hand so the file exists.
 
 The interface is in English by default; switch to French from the tray menu (**Language**). Translations are welcome in `app/renderer/i18n.js`.
 

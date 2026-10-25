@@ -176,3 +176,28 @@ test('the desktop plan advances step by step; without a list, actions give a cap
   await clock.advance(1000)
   expect(lastPush(sent)?.progress).toMatchObject({ measured: true, done: 1, total: 2 })
 })
+
+test('with no island answering, a new session opens it from its launch file, detached', async ($, on) => {
+  const clock = mock.clock(on)
+  const ran: Array<{ argv: readonly string[]; env?: Record<string, string> }> = []
+  on('env.get', (_, e) => ({ value: e.name === 'USERPROFILE' ? 'C:/Users/test' : undefined }))
+  on('fs.read', (_, e) => {
+    if (e.path.endsWith('launch.json')) return { value: JSON.stringify({ platform: 'win32', argv: ['C:/island/electron.exe', 'C:/island/app'], command: '"C:/island/electron.exe" "C:/island/app"', auto: true }) }
+    throw new Error('ENOENT')
+  })
+  on('session.id', () => ({ value: 's1' }))
+  on('session.cwd', () => ({ value: 'C:/dev/checkout-app' }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('process.run', (_, e) => {
+    ran.push({ argv: e.argv, env: e.init?.env })
+
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  await $.session.start({ cwd: 'C:/dev/checkout-app', surface: 'desktop', isInteractive: true })
+  await clock.advance(100)
+
+  expect(ran.length).toBe(1)
+  expect(ran[0]?.argv[0]).toBe('powershell.exe')
+  expect(ran[0]?.argv.join(' ')).toContain('Win32_Process')
+  expect(ran[0]?.env).toEqual({ ISLAND_LAUNCH: 'C:/Users/test/.claude/island/launch.json' })
+})
