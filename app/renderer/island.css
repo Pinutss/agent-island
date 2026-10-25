@@ -68,8 +68,8 @@ body {
 .is-island {
   position: absolute;
   top: 0;
-  left: 50%;
-  translate: -50% 0;
+  left: 0;
+  will-change: transform;
   /* Folded, the pill is as wide as what it says. */
   width: fit-content;
   min-width: 150px;
@@ -88,7 +88,6 @@ body {
   overflow: hidden;
 }
 .is-floating .is-island {
-  top: 2px;
   border-top: 1px solid var(--edge);
   border-radius: 22px;
 }
@@ -250,24 +249,46 @@ body {
   font-size: 11px;
   color: var(--muted);
 }
-.is-skin-nav {
+/* Theme and companion controls: one quiet pill of line icons. */
+.is-seg {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 11px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+.is-seg-gap {
+  width: 1px;
+  height: 14px;
+  margin: 0 3px;
+  background: var(--line);
 }
 .is-icon-btn {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
   border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--panel);
+  border: none;
+  background: transparent;
   color: var(--muted);
-  font: inherit;
-  font-size: 13px;
   cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    transform 0.12s;
 }
 .is-icon-btn:hover {
   color: var(--ink);
   background: var(--hover);
+}
+.is-icon-btn:active {
+  transform: scale(0.9);
+}
+.is-icon-btn .is-ico {
+  display: block;
 }
 
 .is-usage {
@@ -804,4 +825,345 @@ kbd {
 .is-num span {
   font-size: 12px;
   color: var(--muted);
+}
+
+
+/* Tucked: a slim notch on the edge, out of the way of tabs and buttons. */
+.is-island.is-tucked {
+  width: 84px;
+  min-width: 0;
+  overflow: visible;
+  box-shadow: 0 4px 14px var(--shadow);
+}
+.is-tucked .is-bar {
+  height: 7px;
+  padding: 0;
+  gap: 0;
+}
+.is-bar > * {
+  transition: opacity 0.15s;
+}
+.is-tucked .is-bar > * {
+  opacity: 0;
+  width: 0;
+  overflow: hidden;
+}
+/* A larger, invisible target than the notch itself, so it is easy to find. */
+.is-tucked::before {
+  content: '';
+  position: absolute;
+  inset: -2px -16px -8px;
+}
+
+/* Dragging and landing. */
+.is-bar {
+  cursor: grab;
+}
+.is-dragging .is-bar {
+  cursor: grabbing;
+}
+.is-island.is-dragging {
+  border-radius: 22px;
+  border-top: 1px solid var(--edge);
+  scale: 1.04;
+  box-shadow: 0 18px 50px var(--shadow);
+}
+.is-island.is-landed {
+  animation: is-land 0.45s cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+@keyframes is-land {
+  0% {
+    scale: 1.04 0.92;
+  }
+  45% {
+    scale: 0.98 1.03;
+  }
+  100% {
+    scale: 1;
+  }
+}
+
+/* Its shape follows its edge: flat where it touches the screen. */
+.is-h-left.is-v-middle .is-island {
+  border-left: none;
+  border-top: 1px solid var(--edge);
+  border-radius: 0 22px 22px 0;
+}
+.is-h-right.is-v-middle .is-island {
+  border-right: none;
+  border-top: 1px solid var(--edge);
+  border-radius: 22px 0 0 22px;
+}
+.is-v-middle .is-island.is-tucked {
+  width: 8px;
+  height: 86px;
+}
+.is-v-middle .is-tucked::before {
+  inset: -16px -10px;
+}
+
+/* At the bottom: the island sits above the taskbar and opens upwards. */
+.is-at-bottom .is-island {
+  display: flex;
+  flex-direction: column-reverse;
+  border-top: 1px solid var(--edge);
+  border-bottom: none;
+  border-radius: 22px 22px 0 0;
+}
+.is-at-bottom .is-island.is-open {
+  border-radius: 28px 28px 0 0;
+}
+.is-at-bottom.is-floating .is-island {
+  border-bottom: 1px solid var(--edge);
+  border-radius: 22px;
+}
+.is-at-bottom .is-tucked::before {
+  inset: -8px -16px -2px;
+}
+.is-island.is-dragging {
+  border: 1px solid var(--edge);
+  border-radius: 22px;
+}
+
+/* Where the island can land, shown while it is held. */
+.is-slots {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s;
+}
+.is-slots.is-shown {
+  opacity: 1;
+}
+.is-slot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  border-radius: 20px;
+  /* Seen on any wallpaper: a light dashed line with a dark halo, over a faint veil. */
+  border: 1.5px dashed rgba(255, 255, 255, 0.7);
+  background: rgba(30, 31, 34, 0.28);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.28), inset 0 0 0 1px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(2px);
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    box-shadow 0.2s;
+}
+body.is-light .is-slot {
+  border-color: rgba(0, 0, 0, 0.25);
+  background: rgba(0, 0, 0, 0.03);
+}
+.is-slot.is-near {
+  border: 2px solid var(--claude);
+  background: rgba(224, 130, 95, 0.12);
+  box-shadow: 0 0 0 6px rgba(224, 130, 95, 0.14), 0 0 30px rgba(224, 130, 95, 0.35);
+}
+
+
+/* The servers drawer: three chips, then every server with its details. */
+.is-drawer-btn {
+  color: var(--muted);
+}
+.is-drawer-btn .is-ico {
+  margin-left: 2px;
+  transition: transform 0.2s;
+}
+.is-drawer-btn.is-on .is-ico {
+  transform: rotate(180deg);
+}
+.is-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  margin-bottom: 6px;
+  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  animation: is-in 0.22s cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+.is-srv-row {
+  display: grid;
+  grid-template-columns: 8px 54px 1fr 1fr auto 14px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.is-srv-row:hover {
+  background: var(--hover);
+}
+.is-srv-row b {
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-weight: 650;
+}
+.is-srv-kind {
+  color: var(--ink);
+}
+.is-srv-project,
+.is-srv-pid {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.is-srv-pid {
+  font-size: 10.5px;
+}
+.is-srv-row .is-ico {
+  color: var(--faint);
+}
+.is-srv-row:hover .is-ico {
+  color: var(--ink);
+}
+
+/* Which agent a session belongs to, when it is not Claude Code. */
+.is-src {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  vertical-align: 1px;
+  background: var(--hover);
+  color: var(--ink);
+}
+
+
+/* On the sides, folded: the pill stands upright against the edge, its words running
+   along it and facing into the screen. Opened, it is the usual panel. */
+.is-v-middle .is-island:not(.is-open):not(.is-dragging):not(.is-tucked) {
+  width: 40px;
+  min-width: 0;
+}
+.is-v-middle .is-island:not(.is-open):not(.is-dragging):not(.is-tucked) .is-bar {
+  flex-direction: column;
+  height: auto;
+  max-height: 300px;
+  padding: 10px 0;
+  gap: 8px;
+}
+.is-v-middle .is-island:not(.is-open):not(.is-dragging):not(.is-tucked) .is-bar-text,
+.is-v-middle .is-island:not(.is-open):not(.is-dragging):not(.is-tucked) .is-chip {
+  writing-mode: vertical-rl;
+  max-height: 210px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.is-v-middle .is-island:not(.is-open):not(.is-dragging):not(.is-tucked) .is-chip {
+  max-height: 80px;
+}
+/* On the left the words read from the bottom up, so they face into the screen too. */
+.is-h-left.is-v-middle .is-island:not(.is-open):not(.is-dragging):not(.is-tucked) .is-bar-text,
+.is-h-left.is-v-middle .is-island:not(.is-open):not(.is-dragging):not(.is-tucked) .is-chip {
+  transform: rotate(180deg);
+}
+.is-slot-side {
+  border-radius: 14px;
+}
+
+/* Progress: one line per session, and a thin line along the folded pill. */
+.is-bar {
+  position: relative;
+}
+.is-glance {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+.is-glance.is-on {
+  opacity: 1;
+}
+.is-tucked .is-glance {
+  opacity: 0;
+}
+.is-glance-fill {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--claude);
+  transform-origin: left center;
+  transform: scaleX(var(--v, 0));
+  transition: transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.3s ease;
+}
+.is-glance.is-full .is-glance-fill {
+  background: var(--green);
+}
+.is-v-middle .is-island:not(.is-open):not(.is-dragging):not(.is-tucked) .is-glance {
+  left: 3px;
+  right: auto;
+  top: 16px;
+  bottom: 16px;
+  width: 2px;
+  height: auto;
+}
+.is-h-left.is-v-middle .is-island:not(.is-open):not(.is-dragging):not(.is-tucked) .is-glance {
+  left: auto;
+  right: 3px;
+}
+.is-v-middle .is-island:not(.is-open):not(.is-dragging):not(.is-tucked) .is-glance-fill {
+  transform-origin: center top;
+  transform: scaleY(var(--v, 0));
+}
+.is-progress {
+  grid-column: 2 / 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.is-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--hover);
+  overflow: hidden;
+}
+.is-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--claude), color-mix(in srgb, var(--claude) 65%, #fff));
+  transition: width 0.7s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.3s ease;
+}
+.is-progress.is-full .is-fill {
+  background: var(--green);
+}
+.is-pct {
+  min-width: 36px;
+  text-align: right;
+  font-weight: 650;
+  color: var(--ink);
+}
+.is-progress.is-full .is-pct {
+  color: var(--green);
+}
+.is-dot.is-done {
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+}
+.is-session.is-finished {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--line));
 }

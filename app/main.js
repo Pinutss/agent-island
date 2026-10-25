@@ -16,8 +16,78 @@ const DIR = path.join(os.homedir(), '.claude', 'island')
 const HUB_FILE = path.join(DIR, 'island.json')
 const CONFIG_FILE = path.join(DIR, 'config.json')
 const PORT = 47823
-const SIZE = { width: 480, height: 680 }
-const SKIN_NAMES = ['Classique', 'Explorateur', 'Mage', 'Bâtisseur', 'DJ', 'Monarque', 'Ninja', 'Chef', 'Pirate', 'Inventeur']
+// Where the island can rest: the top, middle or bottom of the screen, on the left, in
+// the centre or on the right. The page shows them while the island is held, and a drop
+// lands on the nearest.
+const ANCHORS = [
+  'top-left',
+  'top-center',
+  'top-right',
+  'middle-left',
+  'middle-right',
+  'bottom-left',
+  'bottom-center',
+  'bottom-right',
+]
+const SKIN_NAMES = {
+  en: ['Classic', 'Explorer', 'Wizard', 'Builder', 'DJ', 'Monarch', 'Ninja', 'Chef', 'Pirate', 'Inventor'],
+  fr: ['Classique', 'Explorateur', 'Mage', 'Bâtisseur', 'DJ', 'Monarque', 'Ninja', 'Chef', 'Pirate', 'Inventeur'],
+}
+const SKIN_COUNT = 10
+
+// The app's own words (tray menu, notifications); the page has its own in renderer/i18n.js.
+const WORDS = {
+  en: {
+    show: 'Show the island',
+    style: 'Style',
+    attached: 'Attached to the screen edge',
+    floating: 'Floating',
+    theme: 'Theme',
+    dark: 'Dark',
+    light: 'Light',
+    system: 'Follow Windows',
+    language: 'Language',
+    companion: 'Companion',
+    tuck: 'Tuck into a notch when idle',
+    reset: 'Back to the top centre',
+    screen: 'Screen',
+    screenN: 'Screen {n} ({w}×{h})',
+    notifications: 'Notifications',
+    startup: 'Start with Windows',
+    quit: 'Quit',
+    'notify.plan': '{project} has a plan to review',
+    'notify.question': '{project} has a question',
+    'notify.permission': '{project} is waiting for you',
+  },
+  fr: {
+    show: 'Afficher l’île',
+    style: 'Style',
+    attached: 'Collée au bord de l’écran',
+    floating: 'Flottante',
+    theme: 'Thème',
+    dark: 'Sombre',
+    light: 'Clair',
+    system: 'Comme Windows',
+    language: 'Langue',
+    companion: 'Compagnon',
+    tuck: 'Se replier en encoche quand elle est inactive',
+    reset: 'Remettre en haut au centre',
+    screen: 'Écran',
+    screenN: 'Écran {n} ({w}×{h})',
+    notifications: 'Notifications',
+    startup: 'Lancer au démarrage de Windows',
+    quit: 'Quitter',
+    'notify.plan': '{project} a un plan à valider',
+    'notify.question': '{project} a une question',
+    'notify.permission': '{project} attend ton accord',
+  },
+}
+
+function w(key, vars = {}) {
+  const text = (WORDS[config?.lang] ?? WORDS.en)[key] ?? WORDS.en[key]
+
+  return text.replace(/\{(\w+)\}/g, (_, name) => String(vars[name] ?? ''))
+}
 
 if (!app.requestSingleInstanceLock()) app.quit()
 
@@ -47,6 +117,10 @@ function loadConfig() {
     name: typeof saved.name === 'string' && saved.name ? saved.name : 'Pixel',
     style: saved.style === 'floating' ? 'floating' : 'attached',
     theme: ['light', 'system'].includes(saved.theme) ? saved.theme : 'dark',
+    lang: saved.lang === 'fr' ? 'fr' : 'en',
+    anchor: ANCHORS.includes(saved.anchor) ? saved.anchor : 'top-center',
+    display: Number.isInteger(saved.display) ? saved.display : undefined,
+    tuck: saved.tuck !== false,
     notify: saved.notify !== false,
     days: days.slice(-400),
   }
@@ -69,7 +143,7 @@ function saveConfig() {
 function companion() {
   const level = Math.min(10, config.days.length)
 
-  return { skin: config.skin, name: config.name, level, days: config.days.length, skinName: SKIN_NAMES[config.skin] }
+  return { skin: config.skin, name: config.name, level, days: config.days.length, skinName: SKIN_NAMES[config.lang][config.skin] }
 }
 
 function theme() {
@@ -80,7 +154,26 @@ function theme() {
 
 function publish() {
   if (!win || win.isDestroyed()) return
-  win.webContents.send('island:state', { ...state, servers, companion: companion(), style: config.style, theme: theme() })
+  const [vertical, horizontal] = config.anchor.split('-')
+  win.webContents.send('island:state', {
+    ...state,
+    servers,
+    companion: companion(),
+    style: config.style,
+    theme: theme(),
+    lang: config.lang,
+    placement: { vertical, horizontal },
+    area: area(),
+    tuck: config.tuck,
+  })
+}
+
+function setLang(next) {
+  if (!['en', 'fr'].includes(next)) return
+  config.lang = next
+  saveConfig()
+  publish()
+  tray?.setContextMenu(buildMenu())
 }
 
 function setTheme(next) {
@@ -129,7 +222,7 @@ function notifyNew() {
     notified.add(request.id)
     if (config.notify && Notification.isSupported()) {
       new Notification({
-        title: `${request.project ?? 'Claude Code'} ${request.type === 'plan' ? 'a un plan à valider' : request.type === 'question' ? 'a une question' : 'attend ton accord'}`,
+        title: w(`notify.${request.type === 'plan' || request.type === 'question' ? request.type : 'permission'}`, { project: request.project ?? 'Claude Code' }),
         body: request.title ?? request.tool,
         silent: false,
       }).show()
@@ -137,19 +230,28 @@ function notifyNew() {
   }
 }
 
+function anchorDisplay() {
+  return screen.getAllDisplays().find(d => d.id === config.display) ?? screen.getPrimaryDisplay()
+}
+
+// The window covers the whole screen, transparent and click-through: the island moves
+// inside the page (on the GPU), never the window. The page gets the work area (the
+// screen minus the taskbar) in its own coordinates.
+function area() {
+  const { bounds, workArea } = anchorDisplay()
+
+  return { x: workArea.x - bounds.x, y: workArea.y - bounds.y, width: workArea.width, height: workArea.height }
+}
+
 function place() {
-  const { bounds } = screen.getPrimaryDisplay()
-  win.setBounds({
-    x: Math.round(bounds.x + (bounds.width - SIZE.width) / 2),
-    y: bounds.y + (config.style === 'floating' ? 10 : 0),
-    width: SIZE.width,
-    height: SIZE.height,
-  })
+  win.setBounds(anchorDisplay().bounds)
+  publish()
 }
 
 function createWindow() {
   win = new BrowserWindow({
-    ...SIZE,
+    ...anchorDisplay().bounds,
+    enableLargerThanScreen: true,
     frame: false,
     transparent: true,
     resizable: false,
@@ -185,7 +287,7 @@ function createWindow() {
   screen.on('display-metrics-changed', place)
 }
 
-// A 16x16 companion, drawn pixel by pixel, doubled for the tray.
+// A 16x16 mascot, drawn pixel by pixel, doubled for the tray.
 function trayIcon() {
   const art = [
     '................',
@@ -235,7 +337,7 @@ function buildMenu() {
     { label: 'Agent Island', enabled: false },
     { type: 'separator' },
     {
-      label: 'Afficher l’île',
+      label: w('show'),
       type: 'checkbox',
       checked: visible,
       click: () => {
@@ -245,23 +347,30 @@ function buildMenu() {
       },
     },
     {
-      label: 'Style',
+      label: w('style'),
       submenu: [
-        { label: 'Collée au bord de l’écran', type: 'radio', checked: config.style === 'attached', click: () => setStyle('attached') },
-        { label: 'Flottante', type: 'radio', checked: config.style === 'floating', click: () => setStyle('floating') },
+        { label: w('attached'), type: 'radio', checked: config.style === 'attached', click: () => setStyle('attached') },
+        { label: w('floating'), type: 'radio', checked: config.style === 'floating', click: () => setStyle('floating') },
       ],
     },
     {
-      label: 'Thème',
+      label: w('theme'),
       submenu: [
-        { label: 'Sombre', type: 'radio', checked: config.theme === 'dark', click: () => setTheme('dark') },
-        { label: 'Clair', type: 'radio', checked: config.theme === 'light', click: () => setTheme('light') },
-        { label: 'Comme Windows', type: 'radio', checked: config.theme === 'system', click: () => setTheme('system') },
+        { label: w('dark'), type: 'radio', checked: config.theme === 'dark', click: () => setTheme('dark') },
+        { label: w('light'), type: 'radio', checked: config.theme === 'light', click: () => setTheme('light') },
+        { label: w('system'), type: 'radio', checked: config.theme === 'system', click: () => setTheme('system') },
       ],
     },
     {
-      label: 'Compagnon',
-      submenu: SKIN_NAMES.map((name, skin) => ({
+      label: w('language'),
+      submenu: [
+        { label: 'English', type: 'radio', checked: config.lang === 'en', click: () => setLang('en') },
+        { label: 'Français', type: 'radio', checked: config.lang === 'fr', click: () => setLang('fr') },
+      ],
+    },
+    {
+      label: w('companion'),
+      submenu: SKIN_NAMES[config.lang].map((name, skin) => ({
         label: name,
         type: 'radio',
         checked: config.skin === skin,
@@ -273,7 +382,42 @@ function buildMenu() {
       })),
     },
     {
-      label: 'Notifications',
+      label: w('tuck'),
+      type: 'checkbox',
+      checked: config.tuck,
+      click: item => {
+        config.tuck = item.checked
+        saveConfig()
+        publish()
+      },
+    },
+    {
+      label: w('reset'),
+      click: () => {
+        config.anchor = 'top-center'
+        saveConfig()
+        publish()
+      },
+    },
+    ...(screen.getAllDisplays().length > 1
+      ? [
+          {
+            label: w('screen'),
+            submenu: screen.getAllDisplays().map((d, i) => ({
+              label: w('screenN', { n: i + 1, w: d.size.width, h: d.size.height }),
+              type: 'radio',
+              checked: anchorDisplay().id === d.id,
+              click: () => {
+                config.display = d.id
+                saveConfig()
+                place()
+              },
+            })),
+          },
+        ]
+      : []),
+    {
+      label: w('notifications'),
       type: 'checkbox',
       checked: config.notify,
       click: item => {
@@ -282,7 +426,7 @@ function buildMenu() {
       },
     },
     {
-      label: 'Lancer au démarrage de Windows',
+      label: w('startup'),
       type: 'checkbox',
       checked: startsAtLogin(),
       click: item => {
@@ -290,7 +434,7 @@ function buildMenu() {
       },
     },
     { type: 'separator' },
-    { label: 'Quitter', click: () => app.quit() },
+    { label: w('quit'), click: () => app.quit() },
   ])
 }
 
@@ -320,7 +464,7 @@ ipcMain.on('island:decide', (_event, request) => {
   if (request && typeof request.id === 'string') hub.decide(request.id, request.decision, request.answers)
 })
 ipcMain.on('island:companion', (_event, change) => {
-  if (change && Number.isInteger(change.skin) && change.skin >= 0 && change.skin < SKIN_NAMES.length) config.skin = change.skin
+  if (change && Number.isInteger(change.skin) && change.skin >= 0 && change.skin < SKIN_COUNT) config.skin = change.skin
   if (change && typeof change.name === 'string' && change.name.trim()) config.name = change.name.trim().slice(0, 24)
   saveConfig()
   publish()
@@ -328,6 +472,12 @@ ipcMain.on('island:companion', (_event, change) => {
 })
 
 ipcMain.on('island:theme', (_event, next) => setTheme(next))
+ipcMain.on('island:anchor', (_event, anchor) => {
+  if (!ANCHORS.includes(anchor)) return
+  config.anchor = anchor
+  saveConfig()
+  publish()
+})
 // Only a port the scan found opens, and only as http://localhost.
 ipcMain.on('island:open-server', (_event, port) => {
   if (servers.some(s => s.port === port)) shell.openExternal(`http://localhost:${port}`)

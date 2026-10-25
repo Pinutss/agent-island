@@ -10,10 +10,13 @@ A Dynamic Island for every Claude Code session on your machine. A small pill sit
 - **Questions.** When Claude asks you something (`AskUserQuestion`), pick an option, tick several on a multiple-choice question, or type your own answer. It goes straight back to Claude.
 - **Plans.** A plan waiting for approval is shown in full in the island, while you approve it in Claude (only Claude's own dialog can approve a plan).
 - **Sessions at work.** Every session that is thinking, running a tool, waiting for you or running subagents, with its current action and model.
+- **Progress, 0 to 100 %.** Measured from the session's task list (TodoWrite, the desktop app's plan, TaskCreate/TaskUpdate) and shown as `3/7`; otherwise estimated from the turn's actions (marked `~`, capped at 90 %). 100 % only when the turn really ends. A thin line along the folded pill shows the average.
 - **Usage limits.** Your 5-hour and 7-day windows, with when they reset.
 - **Dev servers.** Ports held by node, python, bun and the like, named after what runs them (vite, next, uvicorn…). Click one to open it.
 - **A companion.** A pixel-art critter in ten outfits that hops when a session needs you.
 - **Dark and light themes.** Anthracite dark by default, light, or follow Windows.
+- **Put it anywhere.** Drag the pill: the spots it can dock to light up, and it springs to the nearest. On the left or right edge it turns into a slim vertical pill, so it never covers your browser tabs.
+- **Grok Build too.** `adapters/grok/` relays Grok sessions through Grok's hooks (see below).
 
 The island only steps in where Claude would have asked you anyway: your permission rules and mode (auto mode included) decide first. With the island closed, Claude Code behaves exactly as before.
 
@@ -51,11 +54,15 @@ Requirements: Windows 10/11 (macOS should work but is untested; the dev-server l
 
 Right-click the tray icon for the theme, the companion, notifications, the island style (attached or floating) and **Start with Windows**.
 
-The interface is in French for now; translations are welcome.
+The interface is in English by default; switch to French from the tray menu (**Language**). Translations are welcome in `app/renderer/i18n.js`.
+
+## Grok Build
+
+Copy `adapters/grok/agent-island.json` to `~/.grok/hooks/agent-island.json` and replace `<PATH>` with the absolute path of `adapters/grok`. Grok sessions then show up marked "Grok", with their prompt, current tool and an estimated progress. Grok's hooks can only refuse a call, never approve it: with `--gate=Bash` added to the `PreToolUse` command (and `"timeout": 95`), those calls are put to the island, which offers **Block** or **Let Grok decide**.
 
 ## Develop
 
-- Hub tests: `cd app && npm test`
+- Hub and Grok adapter tests: `cd app && npm test`
 - Plugin tests: `claude plugin test bridge`
 - `app/renderer/mascot.js` is generated from the mascot module of the Agent Flow plugin; regenerate it rather than editing it.
 

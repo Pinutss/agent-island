@@ -1,5 +1,6 @@
-// How a tool call reads in the island: a short French label with an icon, and, for a
-// permission request, what is about to happen (a diff, a command, a file).
+// How a tool call reads in the island. The island draws it in its own language from
+// `key` and `arg` (renderer/i18n.js, keys `act.<key>` and `perm.<key>`); `label` and
+// `title` are the English text, for anything that reads them as they are.
 
 function text(input: Record<string, unknown>, key: string): string {
   const value = input[key]
@@ -21,65 +22,140 @@ function file(input: Record<string, unknown>, key = 'file_path'): string {
   return baseName(short(text(input, key), 160))
 }
 
-function label(prefix: string, value: string, fallback: string, quoted = false): string {
-  if (value === '') return fallback
+export type Activity = { icon: string; label: string; key: string; arg?: string }
 
-  return quoted ? `${prefix} « ${value} »` : `${prefix} ${value}`
+const ENGLISH: Record<string, string> = {
+  read: 'Reading {arg}',
+  'read.none': 'Reading a file',
+  'notebook.read': 'Reading {arg}',
+  write: 'Writing {arg}',
+  'write.none': 'Writing a file',
+  edit: 'Editing {arg}',
+  'edit.none': 'Editing a file',
+  bash: '$ {arg}',
+  'bash.none': 'Running a command',
+  ps: 'PS {arg}',
+  output: 'Reading a task’s output',
+  stop: 'Stopping a task',
+  monitor: 'Watching a process',
+  grep: 'Searching “{arg}”',
+  'grep.none': 'Searching the code',
+  glob: 'Finding {arg}',
+  'glob.none': 'Finding files',
+  fetch: 'Reading {arg}',
+  'fetch.none': 'Reading a web page',
+  search: 'Searching the web for “{arg}”',
+  'search.none': 'Searching the web',
+  agent: 'Starting “{arg}”',
+  'agent.none': 'Starting a subagent',
+  workflow: 'Running a workflow',
+  skill: 'Using the {arg} skill',
+  'skill.none': 'Using a skill',
+  toolsearch: 'Loading tools',
+  message: 'Sending a message',
+  question: 'Asking a question',
+  plan: 'Proposing a plan',
+  'worktree.in': 'Entering a worktree',
+  'worktree.out': 'Leaving the worktree',
+  'tasks.update': 'Updating its tasks',
+  'tasks.read': 'Checking its tasks',
+  'plan.update': 'Updating the plan',
 }
 
-export type Activity = { icon: string; label: string }
+// An action with a target: `<key>` when the target is known, `<key>.none` otherwise.
+function act(icon: string, key: string, arg = ''): Activity {
+  const k = arg === '' && ENGLISH[`${key}.none`] ? `${key}.none` : key
+  const label = (ENGLISH[k] ?? key).replace('{arg}', arg)
+
+  return arg === '' ? { icon, label, key: k } : { icon, label, key: k, arg }
+}
 
 export function describeTool(tool: string, input: Record<string, unknown>): Activity {
   switch (tool) {
     case 'Read':
-      return { icon: '📖', label: label('Lit', file(input), 'Lit un fichier') }
+      return act('📖', 'read', file(input))
+    case 'NotebookRead':
+      return act('📓', 'notebook.read', file(input, 'notebook_path'))
     case 'Write':
-      return { icon: '📝', label: label('Écrit', file(input), 'Écrit un fichier') }
+      return act('📝', 'write', file(input))
     case 'Edit':
     case 'MultiEdit':
-      return { icon: '✏️', label: label('Modifie', file(input), 'Modifie un fichier') }
+      return act('✏️', 'edit', file(input))
     case 'NotebookEdit':
-      return { icon: '📓', label: label('Modifie', file(input, 'notebook_path'), 'Modifie un notebook') }
+      return act('📓', 'edit', file(input, 'notebook_path'))
     case 'Bash':
-      return { icon: '⌨️', label: label('$', short(text(input, 'command')), 'Lance une commande') }
-    case 'PowerShell':
-      return { icon: '⌨️', label: label('PS', short(text(input, 'command')), 'Lance une commande') }
+      return act('⌨️', 'bash', short(text(input, 'command')))
+    case 'PowerShell': {
+      const command = short(text(input, 'command'))
+
+      return command ? act('⌨️', 'ps', command) : act('⌨️', 'bash')
+    }
+    case 'BashOutput':
+    case 'TaskOutput':
+      return act('📤', 'output')
+    case 'KillShell':
+    case 'KillBash':
+    case 'TaskStop':
+      return act('⏹️', 'stop')
+    case 'Monitor':
+      return act('👁️', 'monitor')
     case 'Grep':
-      return { icon: '🔎', label: label('Cherche', short(text(input, 'pattern'), 50), 'Cherche dans le code', true) }
+      return act('🔎', 'grep', short(text(input, 'pattern'), 50))
     case 'Glob':
-      return { icon: '🗂️', label: label('Trouve', short(text(input, 'pattern'), 60), 'Trouve des fichiers') }
+      return act('🗂️', 'glob', short(text(input, 'pattern'), 60))
     case 'WebFetch': {
       const url = short(text(input, 'url'), 120)
 
-      return { icon: '🌐', label: label('Consulte', /^https?:\/\/([^/]+)/.exec(url)?.[1] ?? url, 'Consulte une page web') }
+      return act('🌐', 'fetch', /^https?:\/\/([^/]+)/.exec(url)?.[1] ?? url)
     }
     case 'WebSearch':
-      return { icon: '🌍', label: label('Recherche', short(text(input, 'query'), 60), 'Recherche sur le web', true) }
+      return act('🌍', 'search', short(text(input, 'query'), 60))
     case 'Agent':
     case 'Task':
-      return { icon: '🤖', label: label('Lance', short(text(input, 'description'), 60), 'Lance un sous-agent', true) }
+      return act('🤖', 'agent', short(text(input, 'description'), 60) || short(text(input, 'subagent_type'), 30))
+    case 'Workflow':
+      return act('🕸️', 'workflow')
+    case 'Skill':
+      return act('🧩', 'skill', short(text(input, 'skill'), 40))
+    case 'ToolSearch':
+      return act('🧰', 'toolsearch')
+    case 'SendMessage':
+      return act('💬', 'message')
     case 'AskUserQuestion':
-      return { icon: '❓', label: 'Pose une question' }
+      return act('❓', 'question')
+    case 'EnterPlanMode':
     case 'ExitPlanMode':
-      return { icon: '📋', label: 'Propose un plan' }
+      return act('📋', 'plan')
+    case 'EnterWorktree':
+      return act('🌿', 'worktree.in')
+    case 'ExitWorktree':
+      return act('🌿', 'worktree.out')
     case 'TodoWrite':
     case 'TaskCreate':
     case 'TaskUpdate':
-      return { icon: '🗒️', label: 'Met à jour ses tâches' }
+      return act('🗒️', 'tasks.update')
+    case 'TaskList':
+    case 'TaskGet':
+      return act('🗒️', 'tasks.read')
   }
   if (tool.startsWith('mcp__')) {
     const [, rawServer = '', ...rest] = tool.split('__')
+    const name = short(rest.join('__'), 40) || 'tool'
+    if (name === 'update_plan') return act('🗒️', 'plan.update')
     const server = rawServer.replace(/^plugin_[^_]+_/, '')
     const shown = server === '' || /^[0-9a-f]{8}-/i.test(server) ? 'MCP' : short(server, 18)
 
-    return { icon: '🔌', label: `${shown} › ${short(rest.join('__'), 40) || 'outil'}` }
+    // A tool's own name reads the same in every language.
+    return { icon: '🔌', label: `${shown} › ${name}`, key: 'tool' }
   }
 
-  return { icon: '🛠️', label: short(tool, 40) || 'Outil' }
+  return { icon: '🛠️', label: short(tool, 40) || 'Tool', key: 'tool' }
 }
 
 export type PermissionDetail = {
   title: string
+  titleKey: string
+  titleArg?: string
   kind: 'diff' | 'command' | 'file' | 'text'
   file?: string
   body: string
@@ -91,7 +167,7 @@ const MAX_CHARS = 6000
 function clipLines(lines: string[]): string {
   const kept = lines.slice(0, MAX_LINES)
   const more = lines.length - kept.length
-  const body = kept.join('\n') + (more > 0 ? `\n… ${more} ligne${more > 1 ? 's' : ''} de plus` : '')
+  const body = kept.join('\n') + (more > 0 ? `\n… ${more} more line${more > 1 ? 's' : ''}` : '')
 
   return body.length > MAX_CHARS ? `${body.slice(0, MAX_CHARS - 1)}…` : body
 }
@@ -100,13 +176,19 @@ function diff(oldText: string, newText: string): string[] {
   return [...oldText.split('\n').map(l => `-${l}`), ...newText.split('\n').map(l => `+${l}`)]
 }
 
+// A permission request's title, keyed for the island (`perm.<titleKey>`).
+function titled(key: string, english: string, arg?: string): Pick<PermissionDetail, 'title' | 'titleKey' | 'titleArg'> {
+  return arg ? { title: english.replace('{arg}', arg), titleKey: key, titleArg: arg } : { title: english, titleKey: key }
+}
+
 export function describePermission(tool: string, raw: unknown): PermissionDetail {
   const input = raw !== null && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
   const path = text(input, 'file_path') || text(input, 'notebook_path')
+  const name = baseName(path)
   switch (tool) {
     case 'Edit':
       return {
-        title: `Modifier ${baseName(path) || 'un fichier'} ?`,
+        ...(name ? titled('edit', 'Edit {arg}?', name) : titled('edit.none', 'Edit a file?')),
         kind: 'diff',
         file: path,
         body: clipLines(diff(text(input, 'old_string'), text(input, 'new_string'))),
@@ -118,29 +200,29 @@ export function describePermission(tool: string, raw: unknown): PermissionDetail
         ...diff(text(edit, 'old_string'), text(edit, 'new_string')),
       ])
 
-      return { title: `Modifier ${baseName(path) || 'un fichier'} ?`, kind: 'diff', file: path, body: clipLines(lines) }
+      return { ...(name ? titled('edit', 'Edit {arg}?', name) : titled('edit.none', 'Edit a file?')), kind: 'diff', file: path, body: clipLines(lines) }
     }
     case 'Write':
       return {
-        title: `Écrire ${baseName(path) || 'un fichier'} ?`,
+        ...(name ? titled('write', 'Write {arg}?', name) : titled('write.none', 'Write a file?')),
         kind: 'file',
         file: path,
         body: clipLines(text(input, 'content').split('\n').map(l => `+${l}`)),
       }
     case 'Bash':
     case 'PowerShell': {
-      const why = text(input, 'description')
+      // The command's own description is the agent's words, shown as they are.
+      const why = short(text(input, 'description'), 120)
 
       return {
-        title: why ? `${why} ?` : 'Lancer cette commande ?',
+        ...(why ? titled('described', '{arg}?', why) : titled('command', 'Run this command?')),
         kind: 'command',
         body: clipLines(text(input, 'command').split('\n')),
       }
     }
     case 'WebFetch':
-      return { title: 'Consulter cette page ?', kind: 'text', body: text(input, 'url') }
+      return { ...titled('fetch', 'Open this page?'), kind: 'text', body: text(input, 'url') }
   }
-  const { label: what } = describeTool(tool, input)
 
-  return { title: `${what} ?`, kind: 'text', body: clipLines(JSON.stringify(input, null, 2).split('\n')) }
+  return { ...titled('tool', 'Use {arg}?', tool), kind: 'text', body: clipLines(JSON.stringify(input, null, 2).split('\n')) }
 }

@@ -2,6 +2,8 @@ import type { EngineInterface, HttpResponse, Register, SessionRateLimit } from '
 
 import { baseName, describePermission, describeTool } from './labels'
 import type { Activity } from './labels'
+import { measure, newTracker, startTurn, track } from './progress'
+import type { Progress } from './progress'
 
 // The bridge between one Claude Code session and the Agent Island desktop app. It
 // pushes the session's state to the island's local hub, and when Claude is about to
@@ -27,6 +29,8 @@ type AgentRow = {
   activity?: Activity
 }
 type Session = {
+  // Which agent the island shows this session as.
+  source: 'claude-code'
   sessionId: string
   cwd: string
   project: string
@@ -38,6 +42,10 @@ type Session = {
   waiting: number
   agents: AgentRow[]
   rateLimits: SessionRateLimit[]
+  // 0 to 1 for the current task (progress.ts); finishedAt marks the turn's end.
+  progress?: Progress
+  finishedAt?: number | null
+  outcome?: 'done' | 'stopped' | null
 }
 
 let hub: Hub | undefined
@@ -48,6 +56,7 @@ let beatTimer: unknown
 let lastPush = 0
 let requestSeq = 0
 let hubLookup: Promise<Hub | undefined> | undefined
+let tracker = newTracker()
 
 // Calls made while a lookup runs wait for it rather than concluding there is no island.
 async function findHub($: EngineInterface): Promise<Hub | undefined> {
@@ -103,6 +112,7 @@ async function push($: EngineInterface): Promise<void> {
   pushTimer = undefined
   if (!session) return
   lastPush = await $.clock.now()
+  session.progress = measure(tracker, typeof session.finishedAt === 'number')
   await call($, '/v1/session', 'POST', { ...session, updatedAt: lastPush })
 }
 
@@ -115,6 +125,7 @@ async function ensure($: EngineInterface, cwd?: string): Promise<Session> {
   if (session) return session
   const dir = cwd ?? (await $.session.cwd())
   session = {
+    source: 'claude-code',
     sessionId: await $.session.id(),
     cwd: dir,
     project: baseName(dir) || dir,
@@ -163,7 +174,7 @@ type IslandAnswer = { decision: string; answers?: Record<string, string> }
 async function askIsland($: EngineInterface, signal: AbortSignal, request: Record<string, unknown>): Promise<IslandAnswer | undefined> {
   const s = await ensure($)
   const id = `${s.sessionId}:${++requestSeq}`
-  const created = await call($, '/v1/permission', 'POST', { id, sessionId: s.sessionId, project: s.project, sessionTitle: s.title, ...request })
+  const created = await call($, '/v1/permission', 'POST', { id, source: s.source, sessionId: s.sessionId, project: s.project, sessionTitle: s.title, ...request })
   if (!created?.ok) return undefined
 
   s.waiting++
@@ -198,11 +209,12 @@ async function showPlan<R>($: EngineInterface, e: unknown, next: (e: never) => P
   const posted = await call($, '/v1/permission', 'POST', {
     id,
     type: 'plan',
+    source: s.source,
     sessionId: s.sessionId,
     project: s.project,
     sessionTitle: s.title,
     tool: 'ExitPlanMode',
-    title: 'Plan prêt à valider',
+    title: 'Plan ready for review',
     body: plan.length > PLAN_MAX ? `${plan.slice(0, PLAN_MAX - 1)}…` : plan,
   })
   if (posted?.ok) {
@@ -223,6 +235,7 @@ async function showPlan<R>($: EngineInterface, e: unknown, next: (e: never) => P
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     session = undefined
+    tracker = newTracker()
     await ensure($, e.cwd)
     beatTimer ??= $.clock.every(BEAT_MS, () => void beat($))
     void push($)
@@ -251,6 +264,10 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       const s = await ensure($)
       s.phase = 'thinking'
+      // null, not undefined: the hub merges what it gets, and JSON drops undefined.
+      s.finishedAt = null
+      s.outcome = null
+      startTurn(tracker)
       schedule($)
     }
 
@@ -275,6 +292,7 @@ export const register: Register = on => {
     const result = await next(e)
     if (!('agentId' in result) || !result.agentId) return result
     const s = await ensure($)
+    tracker.actions++
     const id = result.agentId
     if (!agentRow(s, id)) {
       const used = new Set(s.agents.filter(a => a.phase === 'running').map(a => a.skin))
@@ -340,8 +358,12 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       s.phase = 'tool'
       s.activity = act
-    } else if (row) {
-      row.activity = act
+      tracker.actions++
+      track(tracker, String(e.tool), e as unknown as Record<string, unknown>)
+    } else {
+      // A subagent's actions move its parent's task along too, a little less.
+      tracker.actions += 0.5
+      if (row) row.activity = act
     }
     schedule($)
     const ran = await next(e)
@@ -356,6 +378,8 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       s.phase = 'idle'
       s.activity = undefined
+      s.finishedAt = await $.clock.now()
+      s.outcome = e.reason === 'answer' ? 'done' : 'stopped'
     } else {
       const row = agentRow(s, e.agentId)
       if (row) row.phase = e.reason === 'answer' ? 'done' : 'failed'
@@ -403,7 +427,7 @@ export const register: Register = on => {
           },
         }
       case 'deny':
-        return { decision: { behavior: 'deny', message: 'Refusé depuis Agent Island.' } }
+        return { decision: { behavior: 'deny', message: 'Denied from the island.' } }
       default:
         return next(e)
     }

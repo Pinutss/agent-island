@@ -6,7 +6,7 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/hub.test.js"
+    "test": "node --test test/hub.test.js ../adapters/grok/island-hook.test.js"
   },
   "devDependencies": {
     "electron": "44.7.0"

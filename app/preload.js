@@ -11,5 +11,6 @@ contextBridge.exposeInMainWorld('claudeIsland', {
   decide: (id, decision, answers) => ipcRenderer.send('island:decide', { id, decision, answers }),
   setCompanion: change => ipcRenderer.send('island:companion', change),
   setTheme: theme => ipcRenderer.send('island:theme', theme),
+  setAnchor: anchor => ipcRenderer.send('island:anchor', String(anchor)),
   openServer: port => ipcRenderer.send('island:open-server', Number(port)),
 })
