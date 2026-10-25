@@ -1,0 +1,6 @@
+{
+  "name": "island-bridge",
+  "version": "0.1.0",
+  "description": "Relays every Claude Code session (status, subagents, usage limits, permission requests) to the Agent Island desktop app, and applies the decisions taken there.",
+  "license": "MIT"
+}

@@ -1,0 +1,5 @@
+{
+  "name": "agent-island",
+  "owner": { "name": "Pinutss" },
+  "plugins": [{ "name": "island-bridge", "source": "./bridge" }]
+}

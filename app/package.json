@@ -1,0 +1,16 @@
+{
+  "name": "agent-island",
+  "version": "0.1.0",
+  "description": "A Dynamic Island for every Claude Code session: live status, subagents, usage limits and permission requests.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/hub.test.js"
+  },
+  "devDependencies": {
+    "electron": "44.7.0"
+  },
+  "license": "MIT",
+  "repository": "github:Pinutss/agent-island"
+}
