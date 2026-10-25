@@ -16,6 +16,9 @@ const HUB_RETRY_MS = 10_000
 const WAIT_S = 20
 // Past this, an unanswered request falls back to Claude's own dialog.
 const DECISION_TIMEOUT_MS = 90_000
+// At most one attempt to open the island per this long, per session.
+const WAKE_RETRY_MS = 5 * 60_000
+const WAKE_SETTLE_MS = 4000
 const SKIN_BY_TYPE: Record<string, number> = { Explore: 1, Plan: 2, 'general-purpose': 3, teammate: 4 }
 
 type Hub = { url: string; token: string }
@@ -57,6 +60,7 @@ let lastPush = 0
 let requestSeq = 0
 let hubLookup: Promise<Hub | undefined> | undefined
 let tracker = newTracker()
+let wokeAt = -WAKE_RETRY_MS
 
 // Calls made while a lookup runs wait for it rather than concluding there is no island.
 async function findHub($: EngineInterface): Promise<Hub | undefined> {
@@ -167,6 +171,43 @@ async function beat($: EngineInterface): Promise<void> {
   await push($)
 }
 
+type Launch = { platform?: string; argv?: string[]; command?: string; auto?: boolean }
+
+// WMI starts the island outside this session's process tree, so closing Claude does
+// not close it with it. The command line comes from the launch file, never from here.
+const WINDOWS_LAUNCH =
+  '$l = Get-Content -Raw -LiteralPath $env:ISLAND_LAUNCH | ConvertFrom-Json; ' +
+  'Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $l.command } | Out-Null'
+
+// No island answering: open it the way it last described itself (launch.json, written
+// at each of its launches), unless it was told not to open with Claude Code.
+async function wakeIsland($: EngineInterface): Promise<void> {
+  const now = await $.clock.now()
+  if (now - wokeAt < WAKE_RETRY_MS) return
+  wokeAt = now
+  if ((await call($, '/v1/health'))?.ok) return
+  try {
+    const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
+    if (!home) return
+    const file = `${home}/.claude/island/launch.json`
+    const launch = JSON.parse(String(await $.fs.read(file))) as Launch
+    if (launch.auto === false || !Array.isArray(launch.argv) || launch.argv.length === 0) return
+    if (launch.platform === 'win32') {
+      await $.process.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', WINDOWS_LAUNCH], { env: { ISLAND_LAUNCH: file }, timeoutMs: 20_000 })
+    } else {
+      await $.process.run(['/bin/sh', '-c', 'nohup "$@" >/dev/null 2>&1 &', 'island', ...launch.argv], { timeoutMs: 10_000 })
+    }
+    // Look for its hub again once it has had time to start.
+    $.clock.after(WAKE_SETTLE_MS, () => {
+      hub = undefined
+      hubCheckedAt = -HUB_RETRY_MS
+      void push($)
+    })
+  } catch {
+    // No launch file yet (the island never ran here) or it could not start: carry on.
+  }
+}
+
 type IslandAnswer = { decision: string; answers?: Record<string, string> }
 
 // Puts a request (a permission, a question) to the island and waits for its answer,
@@ -238,7 +279,8 @@ export const register: Register = on => {
     tracker = newTracker()
     await ensure($, e.cwd)
     beatTimer ??= $.clock.every(BEAT_MS, () => void beat($))
-    void push($)
+    // Never in the way of the session: a failure here only means no island.
+    void wakeIsland($).then(() => push($)).catch(() => undefined)
 
     return next(e)
   })
@@ -251,6 +293,7 @@ export const register: Register = on => {
 
   on('prompt.submit', async ($, e, next) => {
     const s = await ensure($)
+    void wakeIsland($).catch(() => undefined)
     if (!e.isMeta && !e.command && e.text.trim()) {
       const line = e.text.trim().split('\n')[0] ?? ''
       s.title = line.length > 90 ? `${line.slice(0, 89)}…` : line

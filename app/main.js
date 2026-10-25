@@ -15,6 +15,9 @@ const { scanServers } = require('./servers')
 const DIR = path.join(os.homedir(), '.claude', 'island')
 const HUB_FILE = path.join(DIR, 'island.json')
 const CONFIG_FILE = path.join(DIR, 'config.json')
+// How to start this island again: the bridge mod reads it to open the island when a
+// Claude Code session starts and none is running.
+const LAUNCH_FILE = path.join(DIR, 'launch.json')
 const PORT = 47823
 // Where the island can rest: the top, middle or bottom of the screen, on the left, in
 // the centre or on the right. The page shows them while the island is held, and a drop
@@ -53,7 +56,8 @@ const WORDS = {
     screen: 'Screen',
     screenN: 'Screen {n} ({w}×{h})',
     notifications: 'Notifications',
-    startup: 'Start with Windows',
+    startup: process.platform === 'darwin' ? 'Open at login' : 'Start with Windows',
+    withClaude: 'Open with Claude Code',
     quit: 'Quit',
     'notify.plan': '{project} has a plan to review',
     'notify.question': '{project} has a question',
@@ -75,7 +79,8 @@ const WORDS = {
     screen: 'Écran',
     screenN: 'Écran {n} ({w}×{h})',
     notifications: 'Notifications',
-    startup: 'Lancer au démarrage de Windows',
+    startup: process.platform === 'darwin' ? 'Ouvrir à la connexion' : 'Lancer au démarrage de Windows',
+    withClaude: 'Ouvrir avec Claude Code',
     quit: 'Quitter',
     'notify.plan': '{project} a un plan à valider',
     'notify.question': '{project} a une question',
@@ -104,7 +109,8 @@ const notified = new Set()
 function loadConfig() {
   let saved = {}
   try {
-    saved = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
+    // A BOM (Windows editors, PowerShell) would make the whole file unreadable.
+    saved = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8').replace(/^\uFEFF/, ''))
   } catch {
     // First launch.
   }
@@ -122,6 +128,9 @@ function loadConfig() {
     display: Number.isInteger(saved.display) ? saved.display : undefined,
     tuck: saved.tuck !== false,
     notify: saved.notify !== false,
+    withClaude: saved.withClaude !== false,
+    // Unset until chosen in the menu (or in config.json): then applied at each launch.
+    startup: typeof saved.startup === 'boolean' ? saved.startup : undefined,
     days: days.slice(-400),
   }
 }
@@ -326,8 +335,21 @@ function trayIcon() {
   return nativeImage.createFromBitmap(buffer, { width: size, height: size })
 }
 
+// A packaged app is its own executable; in development it is Electron plus this folder.
+const launchArgs = () => (app.isPackaged ? [] : [app.getAppPath()])
+
 function startsAtLogin() {
-  return app.getLoginItemSettings({ path: process.execPath, args: [app.getAppPath()] }).openAtLogin
+  return app.getLoginItemSettings({ path: process.execPath, args: launchArgs() }).openAtLogin
+}
+
+function setStartup(on) {
+  app.setLoginItemSettings({ openAtLogin: on, path: process.execPath, args: launchArgs() })
+}
+
+function writeLaunch() {
+  const argv = [process.execPath, ...launchArgs()]
+  const command = argv.map(a => `"${a}"`).join(' ')
+  fs.writeFileSync(LAUNCH_FILE, JSON.stringify({ platform: process.platform, argv, command, auto: config.withClaude }, null, 2))
 }
 
 function buildMenu() {
@@ -430,7 +452,19 @@ function buildMenu() {
       type: 'checkbox',
       checked: startsAtLogin(),
       click: item => {
-        app.setLoginItemSettings({ openAtLogin: item.checked, path: process.execPath, args: [app.getAppPath()] })
+        config.startup = item.checked
+        saveConfig()
+        setStartup(item.checked)
+      },
+    },
+    {
+      label: w('withClaude'),
+      type: 'checkbox',
+      checked: config.withClaude,
+      click: item => {
+        config.withClaude = item.checked
+        saveConfig()
+        writeLaunch()
       },
     },
     { type: 'separator' },
@@ -492,6 +526,8 @@ app.whenReady().then(async () => {
   fs.mkdirSync(DIR, { recursive: true })
   config = loadConfig()
   saveConfig()
+  if (config.startup !== undefined && config.startup !== startsAtLogin()) setStartup(config.startup)
+  writeLaunch()
   const token = crypto.randomBytes(24).toString('hex')
   hub = createHub({
     token,
